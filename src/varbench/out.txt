@@ -1,0 +1,180 @@
+2025-05-23 14:08:10.118872: I tensorflow/core/platform/cpu_feature_guard.cc:210] This TensorFlow binary is optimized to use available CPU instructions in performance-critical operations.
+To enable the following instructions: AVX2 FMA, in other operations, rebuild TensorFlow with the appropriate compiler flags.
+Transformer
+file = /home/ubuntu/kfpca/src/../data
+head =             Start             End  Tweet Count
+0  5/7/2023 19:56  5/7/2023 19:57           39
+1  5/7/2023 19:57  5/7/2023 19:58           23
+2  5/7/2023 19:58  5/7/2023 19:59           30
+3  5/7/2023 19:59  5/7/2023 20:00           24
+4  5/7/2023 20:00  5/7/2023 20:01           23
+2023-05-07 19:57:00
+flatten_counts().head =      Tweets  Tweet Count
+0  0.001538           39
+1  0.000001           39
+2  0.000001           39
+3  0.000001           39
+4  0.000001           39
+features = (100927, 10, 1), target = (100927, 1, 1)
+y_train = (80741, 1, 1), y_test = (20186, 1, 1)
+get_model.data =  (array([[[1.0e-06],
+        [4.6e+01],
+        [4.6e+01],
+        ...,
+        [4.6e+01],
+        [4.6e+01],
+        [4.6e+01]],
+
+       [[1.0e-06],
+        [3.4e+01],
+        [3.4e+01],
+        ...,
+        [3.4e+01],
+        [3.4e+01],
+        [3.4e+01]],
+
+       [[1.0e-06],
+        [3.1e+01],
+        [3.1e+01],
+        ...,
+        [3.1e+01],
+        [3.1e+01],
+        [3.1e+01]],
+
+       ...,
+
+       [[1.0e-06],
+        [6.3e+01],
+        [6.3e+01],
+        ...,
+        [6.3e+01],
+        [6.3e+01],
+        [6.3e+01]],
+
+       [[1.0e-06],
+        [6.1e+01],
+        [6.1e+01],
+        ...,
+        [6.1e+01],
+        [6.1e+01],
+        [6.1e+01]],
+
+       [[1.0e-06],
+        [4.9e+01],
+        [4.9e+01],
+        ...,
+        [4.9e+01],
+        [4.9e+01],
+        [4.9e+01]]]), array([[[46]],
+
+       [[34]],
+
+       [[31]],
+
+       ...,
+
+       [[63]],
+
+       [[61]],
+
+       [[49]]]), array([[[1.0e-06],
+        [5.8e+01],
+        [5.8e+01],
+        ...,
+        [5.8e+01],
+        [5.8e+01],
+        [5.8e+01]],
+
+       [[1.0e-06],
+        [5.8e+01],
+        [5.8e+01],
+        ...,
+        [5.8e+01],
+        [5.8e+01],
+        [5.8e+01]],
+
+       [[1.0e-06],
+        [5.8e+01],
+        [5.8e+01],
+        ...,
+        [5.8e+01],
+        [5.8e+01],
+        [5.8e+01]],
+
+       ...,
+
+       [[1.0e-06],
+        [8.0e+00],
+        [3.9e+01],
+        ...,
+        [3.9e+01],
+        [3.9e+01],
+        [3.9e+01]],
+
+       [[1.0e-06],
+        [8.0e+00],
+        [3.9e+01],
+        ...,
+        [3.9e+01],
+        [3.9e+01],
+        [3.9e+01]],
+
+       [[1.0e-06],
+        [8.0e+00],
+        [3.9e+01],
+        ...,
+        [3.9e+01],
+        [3.9e+01],
+        [3.9e+01]]]), array([[[58]],
+
+       [[58]],
+
+       [[58]],
+
+       ...,
+
+       [[ 8]],
+
+       [[ 8]],
+
+       [[ 8]]]), array([[217]]))
+train_eval().input_shape=(10, 1), xtrain.shape=(80741, 10, 1)
+build_model().x = <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor>, input_shape = (10, 1)
+transformer_encoder().inputs,x = <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor> <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor_1>
+compute_output_shape.input_shape = (None, 10, 1)
+transformer_encoder().inputs,x = <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor_9> <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor_10>
+compute_output_shape.input_shape = (None, 10, 1)
+transformer_encoder().inputs,x = <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor_18> <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor_19>
+compute_output_shape.input_shape = (None, 10, 1)
+transformer_encoder().inputs,x = <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor_27> <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor_28>
+compute_output_shape.input_shape = (None, 10, 1)
+build_model().pool.x = <KerasTensor shape=(None, 10, 1), dtype=float32, sparse=False, name=keras_tensor_36>
+build_model().dropout.x = <KerasTensor shape=(None, 128), dtype=float32, sparse=False, name=keras_tensor_39>
+Traceback (most recent call last):
+  File "/home/ubuntu/kfpca/src/transformer.py", line 339, in <module>
+    t = timeit(lambda: get_layer(get_model(data=data),data[2][0:20],10,False), 
+        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/timeit.py", line 237, in timeit
+    return Timer(stmt, setup, timer, globals).timeit(number)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.12/timeit.py", line 180, in timeit
+    timing = self.inner(it, self.timer)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<timeit-src>", line 6, in inner
+  File "/home/ubuntu/kfpca/src/transformer.py", line 339, in <lambda>
+    t = timeit(lambda: get_layer(get_model(data=data),data[2][0:20],10,False), 
+                                 ^^^^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/kfpca/src/transformer.py", line 240, in get_model
+    return train_eval(*data)
+           ^^^^^^^^^^^^^^^^^
+  File "/home/ubuntu/kfpca/src/transformer.py", line 190, in train_eval
+    model = build_model(
+            ^^^^^^^^^^^^
+  File "/home/ubuntu/kfpca/src/transformer.py", line 182, in build_model
+    outputs = layers.Dense(n_classes, activation="softmax")(x)
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/root/kafka-env/lib/python3.12/site-packages/keras/src/utils/traceback_utils.py", line 122, in error_handler
+    raise e.with_traceback(filtered_tb) from None
+  File "/root/kafka-env/lib/python3.12/site-packages/keras/src/backend/common/variables.py", line 535, in standardize_dtype
+    raise ValueError(f"Invalid dtype: {dtype}")
+ValueError: Invalid dtype: ndarray

@@ -1,0 +1,215 @@
+#cloud-config
+# This cloud-init script installs K3s, joins a Kubernetes cluster as a worker node, and deploys a Kafka broker and a Kafka consumer with a message counter.
+
+users:
+  - name: ubuntu
+    plain_text_passwd: '<VM_PASSWORD>'
+    lock_passwd: false
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh-authorized-keys:
+      - ssh-rsa <YOUR_SSH_PUBLIC_KEY>
+
+chpasswd:
+  list: |
+    ubuntu:<VM_PASSWORD>
+  expire: False
+
+ssh_pwauth: true
+
+package_update: true
+package_upgrade: true
+
+# Install necessary packages
+packages:
+  - net-tools  # for netstat
+  - curl
+  - python3
+  - python3.12-venv
+  - docker
+  - sshpass
+  - kafkacat
+
+# Replace <CONTROL_PLANE_IP> with the IP address of the control plane node
+# Replace <JOIN_TOKEN> with the token from the master node's /root/k3s_cluster/k3s_token.txt
+
+runcmd:
+  # Create a virtual environment
+  - python3 -m venv /root/kafka-env
+  # clone autoscalers
+  - git clone https://github.com/msrg/ksurf.git /root/kfpca
+  - /root/kafka-env/bin/pip3 install -r /root/kfpca/requirements.txt
+
+  # Step 1: Join the Kubernetes cluster as a worker node (in the background)
+  - echo "Joining Kubernetes cluster in the background..."
+  - sshpass -p "<VM_PASSWORD>" scp -o StrictHostKeyChecking=no ubuntu@192.168.41.39:/home/ubuntu/join_command.txt /home/ubuntu/join_command.sh
+  - echo "executing `cat /home/ubuntu/join_command.sh`"
+  - sh /home/ubuntu/join_command.sh
+  #- curl -sfL https://get.k3s.io | K3S_URL=https://192.168.41.39:6443 K3S_TOKEN=`cat /home/ubuntu/k3s_token.txt` sh -s - --with-node-id
+  #- curl -sfL https://get.k3s.io | K3S_URL=https://192.168.41.39:6443 K3S_TOKEN=<K3S_TOKEN> sh -s - --with-node-id
+  #- curl -sfL https://get.k3s.io | K3S_URL=https://192.168.41.39:6443 K3S_TOKEN=<K3S_TOKEN> sh -s - --with-node-id
+  #- curl -sfL https://get.k3s.io | K3S_URL=https://192.168.41.39:6443 K3S_TOKEN=<K3S_TOKEN> sh -s - --with-node-id
+  #- curl -sfL -k https://get.k3s.io | K3S_URL=https://192.168.41.39:6443 K3S_TOKEN=<K3S_TOKEN> sh -s - --with-node-id
+
+  # Step 2: Wait for Kubernetes services to start by sleeping for 180 seconds
+  #- echo "Waiting for Kubernetes API to be ready with a 180-second sleep..."
+  - sleep 180
+
+  # Step 3: Set up kubectl for the ubuntu user to access the K3s cluster
+  - mkdir -p /home/ubuntu/.kube
+  - chown -R ubuntu:ubuntu /home/ubuntu/.kube
+  - ssh-keygen -R 192.168.41.39
+  #- cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+  - sshpass -p "<VM_PASSWORD>" scp -o StrictHostKeyChecking=no ubuntu@192.168.41.39:/etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+  - sshpass -p "<VM_PASSWORD>" scp -o StrictHostKeyChecking=no ubuntu@192.168.41.39:/home/ubuntu/*.sh /home/ubuntu/
+  - chown ubuntu:ubuntu /home/ubuntu/.kube/config
+  - chown ubuntu:ubuntu /home/ubuntu/*.sh
+  - chmod 755 /home/ubuntu/*.sh
+  - sed -i 's/127.0.0.1/192.168.41.39/g' /home/ubuntu/.kube/config
+  - echo "export KUBECONFIG=/home/ubuntu/.kube/config" >> /home/ubuntu/.profile
+  - export KUBECONFIG=/home/ubuntu/.kube/config
+  - export ZOOKEEPER_ID=`kubectl describe svc/zookeeper -n kube-system | grep Endpoints | awk '{print $2}'`
+  - echo ZOOKEEPER_ID = $ZOOKEEPER_ID
+
+  # Step 4: Create a unique Kafka broker ID for each worker node
+  - NODE_ID=$(hostname | awk -F'-' '{print $NF}')
+  - export KAFKA_BROKER_ID=$NODE_ID
+
+  # Step 5: Deploy a Kafka broker and consumer with the unique broker ID and message counter
+  - |
+    cat <<EOF > /root/kafka-deployment.yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: kafka-$KAFKA_BROKER_ID
+      namespace: kube-system
+    spec:
+      ports:
+      - port: 9092
+        name: kafka-port
+      selector:
+        app: kafka-$KAFKA_BROKER_ID-app
+      clusterIP: None
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: kafka-$KAFKA_BROKER_ID
+      namespace: kube-system
+    spec:
+      replicas: 10
+      selector:
+        matchLabels:
+          app: kafka-$KAFKA_BROKER_ID-app
+      template:
+        metadata:
+          labels:
+            app: kafka-$KAFKA_BROKER_ID-app
+        spec:
+          containers:
+          # Kafka Broker Container
+          - name: kafka
+            image: wurstmeister/kafka:latest
+            imagePullPolicy: IfNotPresent
+            env:
+            - name: POD_IP
+              valueFrom:
+                  fieldRef:
+                      fieldPath: status.podIP
+            - name: KAFKA_BROKER_ID
+              value: "$(echo ${KAFKA_BROKER_ID} | grep -o '[0-9]*' | head -n 1)"
+            - name: KAFKA_ZOOKEEPER_CONNECT
+              value: "$(echo ${ZOOKEEPER_ID})"   # Updated to master node Zookeeper IP
+            - name: KAFKA_LISTENERS
+              value: "PLAINTEXT://:9092"   # Updated to master node Kafka IP
+            - name: KAFKA_ADVERTISED_LISTENERS
+              value: "PLAINTEXT://\$(POD_IP):9092"   # Updated to master node Kafka IP
+            - name: KAFKA_LISTENER_SECURITY_PROTOCOL_MAP
+              value: "PLAINTEXT:PLAINTEXT"
+            - name: KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR
+              value: "3"
+            - name: KAFKA_CREATE_TOPICS
+              value: "test-topic:1:1"
+            ports:
+            - containerPort: 9092
+            resources:
+              requests:
+                cpu: "200m"  # 200 millicores
+                memory: "512Mi"
+              limits:
+                cpu: "500m"
+                memory: "1Gi"
+
+          # Kafka Consumer Container with Message Counter
+          - name: kafka-consumer
+            image: edenhill/kcat:1.7.1
+            imagePullPolicy: IfNotPresent
+            command: ["/bin/sh", "-c"]
+            args:
+              - |
+                mkdir -p /var/log/
+                COUNT=0
+                kcat -C -b \$(POD_IP):9092 -t test-topic -o beginning | while read -r line; do
+                  COUNT=\$((COUNT + 1))
+                  TS=\$(date +%s%N)
+                  DATE=\$(date)
+                  if [ \$((COUNT % 1000)) -eq 0 ]; then
+                    echo "Processed \$COUNT message '$line' received '$DATE' at '$TS' from Kafka broker $KAFKA_BROKER_ID" >> /var/log/kafka-consumer.log
+                  fi
+                done
+            env:
+            - name: POD_IP
+              valueFrom:
+                  fieldRef:
+                      fieldPath: status.podIP
+            - name: KAFKA_BROKER
+              value: "\$(POD_IP):9092"   # Updated to master node Kafka IP
+            resources:
+              requests:
+                cpu: "200m"  # 200 millicores
+                memory: "512Mi"
+              limits:
+                cpu: "500m"
+                memory: "1Gi"
+    EOF
+
+  # Step 6: Apply the Kafka deployment for this worker node
+  - /usr/local/bin/kubectl apply --validate=false -f /root/kafka-deployment.yaml --kubeconfig=/home/ubuntu/.kube/config
+  - echo $(kubectl get pods -n kube-system --sort-by='.metadata.creationTimestamp' | tail -n 1 | awk '{print $1}') > /home/ubuntu/pod.id
+  - |
+    POD=`cat /home/ubuntu/pod.id`
+    echo "Created Pod: $POD"
+  - sleep 60
+
+  # Apply HPA
+  - |
+    cat <<EOF > /root/hpa.yaml
+    apiVersion: autoscaling/v2
+    kind: HorizontalPodAutoscaler
+    metadata:
+      name: kafka-$KAFKA_BROKER_ID-hpa
+      namespace: kube-system
+    spec:
+      scaleTargetRef:
+        apiVersion: apps/v1
+        kind: Deployment
+        name: kafka-$KAFKA_BROKER_ID
+      minReplicas: 1
+      maxReplicas: 10
+      metrics:
+      - type: Resource
+        resource:
+          name: cpu
+          target:
+            type: Utilization
+            averageUtilization: 20  # Target 50% CPU utilization
+      behavior:
+        scaleUp:
+          stabilizationWindowSeconds: 2
+        scaleDown:
+          stabilizationWindowSeconds: 2
+    EOF
+  - kubectl apply -f /root/hpa.yaml  --kubeconfig=/home/ubuntu/.kube/config
+
+

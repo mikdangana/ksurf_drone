@@ -1,0 +1,119 @@
+#cloud-config
+# This cloud-init script installs μBench, configures a Kafka producer, and integrates μBench to generate messages for Kafka.
+
+users:
+  - name: ubuntu
+    plain_text_passwd: '<VM_PASSWORD>'
+    lock_passwd: false
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh-authorized-keys:
+      - ssh-rsa <YOUR_SSH_PUBLIC_KEY>
+
+chpasswd:
+  list: |
+    ubuntu:<VM_PASSWORD>
+  expire: False
+
+ssh_pwauth: true
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - openjdk-11-jdk  # Install Java for μBench
+  - git             # To clone μBench and kafka-python
+  - python3         # Python3 is required
+  #- python3-pip     # Install pip for Python3
+  #- python3-env     
+  - python3.12-venv
+  #- python3.12-kafka-python-ng
+  #- python3.12-jproperties
+  - net-tools       # For netstat
+  - curl
+  - docker
+  - sshpass
+
+runcmd:
+  # Step 1: Install Kafka Python dependencies
+  #- pip3 install kafka-python
+
+  #- apt install python3.12-venv
+
+  # Create a virtual environment
+  - python3 -m venv /root/kafka-env
+
+  # Activate the virtual environment and install kafka-python
+  #- /root/kafka-env/bin/pip3 install kafka-python-ng
+  #- /root/kafka-env/bin/pip3 install jproperties
+  #- /root/kafka-env/bin/pip3 install scipy
+  #- /root/kafka-env/bin/pip3 install tensorflow
+  - |
+    cat <<EOF > requirements.txt
+    kafka-python-ng
+    jproperties
+    scipy
+    tensorflow
+    numpy
+    matplotlib
+    pandas
+    plotly
+    PyYAML
+    scikit-learn
+    filterpy
+    argcomplete
+    EOF
+  - /root/kafka-env/bin/pip3 install -r requirements.txt
+
+  # Step 2: Clone the workload generator repository
+  - git clone https://github.com/msrg/ksurf.git /root/kfpca
+  - /root/kafka-env/bin/pip3 install -r /root/kfpca/requirements.txt
+
+  # Step 2: Clone μBench repository and build it
+  - git clone https://github.com/mSvcBench/muBench.git /root/muBench
+  - cd /root/muBench && ./gradlew build
+
+  # Update the Kafka producer script to use the virtual environment's Python interpreter
+  #- sed -i '1s|#!/usr/bin/env python3|#!/root/kafka-env/bin/python|' /root/muBench_kafka_forwarder.py
+
+  # Step 3: Set Kafka cluster variables
+  #- export KAFKA_BROKER_LIST="127.0.0.1:9092"  # Adjust to your Kafka broker
+  - export TOPIC="test-topic"
+
+  # Step 4: Join the Kubernetes cluster as a worker node (in the background)
+  - echo "Joining Kubernetes cluster in the background..."
+  - ssh-keygen -R 192.168.41.39
+  - sshpass -p "<VM_PASSWORD>" scp -o StrictHostKeyChecking=no ubuntu@192.168.41.39:/home/ubuntu/join_command.txt /home/ubuntu/join_command.sh
+  - echo "executing `cat /home/ubuntu/join_command.sh`"
+  - sh /home/ubuntu/join_command.sh
+
+  #- curl -sfL -k https://get.k3s.io | K3S_URL=https://192.168.41.39:6443 K3S_TOKEN=<K3S_TOKEN> sh -s - --with-node-id
+
+  # Step 4.1: Set up kubectl for the ubuntu user to access the K3s cluster
+  - mkdir -p /home/ubuntu/.kube
+  - chown -R ubuntu:ubuntu /home/ubuntu/.kube
+  - sshpass -p "<VM_PASSWORD>" scp -o StrictHostKeyChecking=no ubuntu@192.168.41.39:/etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+  - chown ubuntu:ubuntu /home/ubuntu/.kube/config
+  - sed -i 's/127.0.0.1/192.168.41.39/g' /home/ubuntu/.kube/config
+  - echo "export KUBECONFIG=/home/ubuntu/.kube/config" >> /home/ubuntu/.profile
+  - export KUBECONFIG=/home/ubuntu/.kube/config
+
+  # Step 5: Port-forward Kafka worker service to localhost
+  #- nohup kubectl port-forward svc/kafka-worker1 9092:9092 -n kafka > /var/log/kafka-port-forward.log 2>&1 &
+
+  # Step 6: Configure and run the workload generator
+  - sleep 60
+  - kubectl get pods -n kube-system | grep worker1.*Run | awk '{print $1}' > /home/ubuntu/pod.id
+  - kubectl exec -it `cat /home/ubuntu/pod.id` -n kube-system -- hostname -I | xargs > /home/ubuntu/pod.ip
+  - |
+    cat <<EOF > /root/kafka_producer_workload.sh
+    #!/bin/bash
+    POD_ID=`kubectl get pods -n kube-system --kubeconfig=/home/ubuntu/.kube/config | grep worker.*Run | head -1 | awk '{print $1}'`
+    POD_IP=`kubectl exec -it -n kube-system --kubeconfig=/home/ubuntu/.kube/config $POD_ID -- hostname -I | xargs`
+    echo POD_IP = $POD_IP, POD_ID = $POD_ID
+    echo "Running /root/kafka-env/bin/python3 /root/kfpca/src/kafka/producer.py --poisson --brokers \$POD_IP:9092 --topic test-topic --rate 100 --duration 600..."
+    /root/kafka-env/bin/python3 /root/kfpca/src/kafka/producer.py --poisson --brokers \$POD_IP:9092 --topic test-topic --rate 100 --duration 600
+    EOF
+  - chmod +x /root/kafka_producer_workload.sh
+  - echo "Ksurf setup complete. Please run /root/kafka_producer_workload.sh > /var/log/kafka-producer.log 2>&1 &"
+  # - /root/kafka_producer_workload.sh > /var/log/kafka-producer.log 2>&1 &
+

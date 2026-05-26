@@ -1,0 +1,119 @@
+#cloud-config
+# This cloud-init script installs μBench, configures a Kafka producer, and integrates μBench to generate messages for Kafka.
+
+users:
+  - name: ubuntu
+    plain_text_passwd: '<VM_PASSWORD>'
+    lock_passwd: false
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh-authorized-keys:
+      - ssh-rsa <YOUR_SSH_PUBLIC_KEY>
+
+chpasswd:
+  list: |
+    ubuntu:<VM_PASSWORD>
+  expire: False
+
+ssh_pwauth: true
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - openjdk-11-jdk  # Install Java for μBench
+  - git             # To clone μBench and kafka-python
+  - python3         # Python3 is required
+  - python3-pip     # Pip
+  - net-tools  # for netstat
+  - curl
+  - docker
+  - sshpass
+
+runcmd:
+  # Step 1: Clone kafka-python repository from GitHub
+  - git clone https://github.com/dpkp/kafka-python.git /root/kafka-python
+
+  # Step 2: Clone μBench repository and build it
+  - git clone https://github.com/mbudiu-vmw/microbench.git /root/microbench
+  - cd /root/microbench && ./gradlew build
+  
+  # Step 3: Set Kafka cluster variables
+  - export KAFKA_BROKER_LIST="10.42.0.71:9092"  # Master node broker IP
+  - export TOPIC="test-topic"                       # Kafka topic for workload
+  
+  # Step 3.1: Join the Kubernetes cluster as a worker node (in the background)
+  - echo "Joining Kubernetes cluster in the background..."
+  - curl -sfL -k https://get.k3s.io | K3S_URL=https://192.168.41.228:6443 K3S_TOKEN=<K3S_TOKEN> sh -s - --with-node-id
+
+  # Step 3.1.0: Set up kubectl for the ubuntu user to access the K3s cluster
+  - mkdir -p /home/ubuntu/.kube
+  - chown -R ubuntu:ubuntu /home/ubuntu/.kube
+  - ssh-keygen -R 192.168.41.228
+  #- cp /etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+  - sshpass -p "<VM_PASSWORD>" scp -o StrictHostKeyChecking=no ubuntu@192.168.41.228:/etc/rancher/k3s/k3s.yaml /home/ubuntu/.kube/config
+  - chown ubuntu:ubuntu /home/ubuntu/.kube/config
+  - sed -i 's/127.0.0.1/192.168.41.228/g' /home/ubuntu/.kube/config
+  - echo "export KUBECONFIG=/home/ubuntu/.kube/config" >> /home/ubuntu/.profile
+  - export KUBECONFIG=/home/ubuntu/.kube/config
+
+
+  # Step 3.2: connect to kafka
+  - kubectl port-forward svc/kafka-worker1 9092:9092 -n kafka
+
+  # Step 4: Kafka Producer Script to Send Workload from μBench to Kafka
+  - |
+    cat <<EOF > /root/microbench_kafka_forwarder.py
+    import subprocess
+    import time
+    import sys
+    import os
+
+    # Add kafka-python source directory to sys.path
+    sys.path.append('/root/kafka-python')  # This allows us to import kafka-python directly from source
+
+    from kafka import KafkaProducer  # Import Kafka module from source
+
+    KAFKA_BROKER_LIST = os.getenv("KAFKA_BROKER_LIST", "127.0.0.1:9092")
+    TOPIC = os.getenv("TOPIC", "test-topic")
+
+    # Initialize Kafka producer
+    producer = KafkaProducer(bootstrap_servers=KAFKA_BROKER_LIST)
+
+    # Run μBench as a subprocess
+    ubench_cmd = ["java", "-jar", "/root/microbench/build/libs/microbench-all.jar", "-config", "/root/workload.config"]
+    process = subprocess.Popen(ubench_cmd, stdout=subprocess.PIPE, text=True)
+
+    count = 0
+    try:
+        # Read each line of μBench output and send as Kafka message
+        for line in process.stdout:
+            if line.strip():  # Check if line is not empty
+                producer.send(TOPIC, line.strip().encode("utf-8"))
+                count += 1
+                if count % 1000 == 0:
+                    print(f"Forwarded {count} messages to Kafka topic {TOPIC}")
+            time.sleep(0.01)  # Optional: control throughput
+
+        producer.flush()
+        print(f"Completed forwarding {count} messages to topic {TOPIC}")
+
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        process.stdout.close()
+        process.wait()
+        producer.close()
+    EOF
+
+  # Step 5: μBench Configuration File
+  - |
+    cat <<EOF > /root/workload.config
+    # μBench workload configuration
+    operations=WRITE
+    threads=4
+    requests=100000
+    EOF
+
+  # Step 6: Run the Kafka forwarder to process μBench output and forward to Kafka
+  - python3 /root/microbench_kafka_forwarder.py > /var/log/microbench_kafka_forwarder.log 2>&1 &
+

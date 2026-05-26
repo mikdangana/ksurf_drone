@@ -1,0 +1,16 @@
+kafka-python-ng
+jproperties
+scipy
+tensorflow
+tensorflow-cpu
+numpy
+matplotlib
+pandas
+plotly
+PyYAML
+scikit-learn
+filterpy
+kubernetes
+statsmodels
+keras-tcn
+

@@ -1,0 +1,33 @@
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mubench-pod
+  namespace: kube-system
+  labels:
+    app: mubench
+spec:
+  containers:
+  - name: mubench-container
+    image: ghcr.io/msvcbench/mubench:latest
+    command: ["/bin/sh", "-c"]
+    args:
+      - |
+        echo "Starting muBench application";
+        mubench --config /etc/mubench/config.yaml;
+    volumeMounts:
+    - name: mubench-config
+      mountPath: /etc/mubench
+      readOnly: true
+    resources:
+      limits:
+        memory: "256Mi"
+        cpu: "200m"
+      requests:
+        memory: "128Mi"
+        cpu: "100m"
+  volumes:
+  - name: mubench-config
+    configMap:
+      name: mubench-config
+  restartPolicy: Always
+

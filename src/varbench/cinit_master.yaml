@@ -1,0 +1,83 @@
+#cloud-config
+# This cloud-init script installs K3s, sets up a Kubernetes master node, and deploys Zookeeper for Kafka brokers.
+
+package_update: true
+package_upgrade: true
+
+# Step 1: Install dependencies and K3s on the control plane node
+runcmd:
+  # Install K3s as the Kubernetes control plane
+  - curl -sfL https://get.k3s.io | sh -s - server --cluster-init --write-kubeconfig-mode "644"
+
+  # Step 2: Save the K3s node token for worker nodes to join
+  - mkdir -p /root/k3s_cluster
+  - cat /var/lib/rancher/k3s/server/node-token > /root/k3s_cluster/k3s_token.txt
+
+  # Step 3: Create a Kubernetes namespace for Kafka
+  - k3s kubectl create namespace kafka
+
+  # Step 4: Deploy Zookeeper using a Kubernetes manifest
+  - |
+    cat <<EOF > /root/zookeeper-deployment.yaml
+    apiVersion: v1
+    kind: Service
+    metadata:
+      name: zookeeper
+      namespace: kube-system
+    spec:
+      ports:
+      - port: 2181
+      selector:
+        app: zookeeper
+      clusterIP: None
+    ---
+    apiVersion: apps/v1
+    kind: Deployment
+    metadata:
+      name: zookeeper
+      namespace: kube-system
+    spec:
+      replicas: 1
+      selector:
+        matchLabels:
+          app: zookeeper
+      template:
+        metadata:
+          labels:
+            app: zookeeper
+        spec:
+          containers:
+          - name: zookeeper
+            image: wurstmeister/zookeeper:latest
+            ports:
+            - containerPort: 2181
+    EOF
+
+  # Apply the Zookeeper deployment
+  - k3s kubectl apply -f /root/zookeeper-deployment.yaml
+  # - kubectl port-forward svc/zookeeper 2181:2181 -n kafka
+
+  # Step 5: Output the join command for the worker nodes to connect
+  - IP_ADDRESS=$(hostname -I | awk '{print $1}')
+  - echo "# To add a worker node, run the following command on the worker node:" > /root/k3s_cluster/join_command.txt
+  - echo "curl -sfL https://get.k3s.io | K3S_URL=https://$IP_ADDRESS:6443 K3S_TOKEN=$(cat /root/k3s_cluster/k3s_token.txt) sh -s - --with-node-id" >> /root/k3s_cluster/join_command.txt
+
+  # Step 6: Print the join command in cloud-init logs
+  - cp /root/k3s_cluster/join_command.txt /home/ubuntu/join_command.txt
+  - cat /root/k3s_cluster/join_command.txt
+
+users:
+  - name: ubuntu
+    plain_text_passwd: '<VM_PASSWORD>'
+    lock_passwd: false
+    sudo: ['ALL=(ALL) NOPASSWD:ALL']
+    ssh-authorized-keys:
+      - ssh-rsa <YOUR_SSH_PUBLIC_KEY>
+
+chpasswd:
+  list: |
+    ubuntu:<VM_PASSWORD>
+  expire: False
+
+ssh_pwauth: true
+

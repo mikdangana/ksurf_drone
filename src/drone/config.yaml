@@ -1,0 +1,32 @@
+# Drone Configuration File
+
+# Public Cloud Settings
+alpha: 0.7 # Weight for performance (higher prioritizes performance)
+beta: 0.3 # Weight for cost (higher prioritizes cost saving)
+
+# Performance targets
+performance_target:
+    microservice: 100.0 # Target P90 latency in ms
+    batch: 300.0 # Target job completion time in seconds
+
+# Private Cloud Settings
+resource_limits:
+    cpu: 0.8 # 80% of total CPU
+    memory: 0.7 # 70% of total memory
+    network: 0.5 # 50% of network capacity
+
+# Algorithm Settings
+sliding_window_size: 30 # Number of data points to keep in the GP model
+exploration_duration: 10 # Number of initial exploration steps for private cloud
+
+# Monitoring Settings
+metrics:
+    performance:
+        microservice: "p90_latency"
+        batch: "job_time"
+    context:
+        workload: "sum(rate(http_requests_total{namespace='{{namespace}}'}[5m]))"
+        cpu_util: "avg(node_cpu_utilization)"
+        mem_util: "avg(node_memory_utilization)"
+        net_util: "avg(node_network_transmit_bytes_total + node_network_receive_bytes_total)"
+        spot_price: "1" 
